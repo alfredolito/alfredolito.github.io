@@ -31,34 +31,28 @@
 
       await ffmpeg.load();
 
-      const extractFirstFrameFromLocalFile = async (file, size) => {
-        size ||= 2 * 1024 * 1024;
+      const extractFirstFrameFromLocalFile = async (file) => {
+        await ffmpeg.createDir("/mounted");
+        await ffmpeg.mount("WORKERFS", { files: [file] }, "/mounted");
 
-        if (size >= 64 * 1024 * 1024) {
-          throw new Error("Using too much memory.");
-        }
+        await ffmpeg.exec([
+          "-i",
+          `/mounted/${file.name}`,
+          "-frames:v",
+          "1",
+          "output.png",
+        ]);
 
-        console.log("Trying with size", size);
+        console.log("HEPP");
+        const data = await ffmpeg.readFile("output.png");
+        console.log("data", data);
 
-        const arrayBuffer = await file.slice(0, size).arrayBuffer();
-        await ffmpeg.writeFile("input.mp4", new Uint8Array(arrayBuffer));
-        await ffmpeg.exec(["-i", "input.mp4", "-frames:v", "1", "output.png"]);
-        await ffmpeg.deleteFile("input.mp4");
-
-        const data = await (async () => {
-          try {
-            return await ffmpeg.readFile("output.png");
-          } catch (error) {
-            // We did not find a first frame within the given size.
-            return null;
-          }
-        })();
-        if (data === null) {
-          // Try again with double the memory size:
-          return extractFirstFrameFromLocalFile(file, size * 2);
-        }
         await ffmpeg.deleteFile("output.png");
+        await ffmpeg.unmount("/mounted");
 
+        await ffmpeg.deleteDir("/mounted");
+
+        console.log("YO!");
         const blob = new Blob([data.buffer], { type: "image/png" });
         return URL.createObjectURL(blob);
       };
