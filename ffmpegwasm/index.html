@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Extract First Frame</title>
+    <script src="node_modules/@ffmpeg/ffmpeg/dist/umd/ffmpeg.js"></script>
+    <script type="module">
+      const { FFmpeg } = window.FFmpegWASM;
+
+      const ffmpeg = new FFmpeg();
+      ffmpeg.on("log", ({ message }) => {
+        console.log(message);
+        const durationMatch = message.match(
+          /Duration: (\d+):(\d+):(\d+).(\d+)/
+        );
+        if (durationMatch) {
+          const hours = parseInt(durationMatch[1]);
+          const minutes = parseInt(durationMatch[2]);
+          const seconds = parseInt(durationMatch[3]);
+          const milliseconds = parseInt(durationMatch[4]);
+          const duration =
+            hours * 3600 + minutes * 60 + seconds + milliseconds / 100;
+          console.log("Duration:", duration);
+          document.getElementById("duration").textContent = duration;
+        }
+      });
+      ffmpeg.on("progress", ({ progress, time }) => {
+        console.log(`${progress * 100} %, time: ${time / 1000000} s`);
+      });
+
+      await ffmpeg.load();
+
+      const extractFirstFrameFromLocalFile = async (file, size) => {
+        size ||= 2 * 1024 * 1024;
+
+        if (size >= 64 * 1024 * 1024) {
+          throw new Error("Using too much memory.");
+        }
+
+        console.log("Trying with size", size);
+
+        const arrayBuffer = await file.slice(0, size).arrayBuffer();
+        await ffmpeg.writeFile("input.mp4", new Uint8Array(arrayBuffer));
+        await ffmpeg.exec(["-i", "input.mp4", "-frames:v", "1", "output.png"]);
+        await ffmpeg.deleteFile("input.mp4");
+
+        const data = await (async () => {
+          try {
+            return await ffmpeg.readFile("output.png");
+          } catch (error) {
+            // We did not find a first frame within the given size.
+            return null;
+          }
+        })();
+        if (data === null) {
+          // Try again with double the memory size:
+          return extractFirstFrameFromLocalFile(file, size * 2);
+        }
+        await ffmpeg.deleteFile("output.png");
+
+        const blob = new Blob([data.buffer], { type: "image/png" });
+        return URL.createObjectURL(blob);
+      };
+
+      document
+        .querySelector("#videoInput")
+        .addEventListener("change", async (event) => {
+          const file = event.target.files[0];
+          const url = await extractFirstFrameFromLocalFile(file);
+          const img = document.getElementById("output");
+          img.src = url;
+        });
+    </script>
+  </head>
+  <body>
+    <h1>Extract First Frame from Video</h1>
+    <h3>Choose video:</h3>
+    <div>
+      <input type="file" id="videoInput" />
+    </div>
+    <h3>Metadata:</h3>
+    <div id="metadata">Duration: <span id="duration">0</span> seconds</div>
+    <h3>First frame:</h3>
+    <div>
+      <img id="output" />
+    </div>
+  </body>
+</html>
